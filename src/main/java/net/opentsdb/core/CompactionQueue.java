@@ -87,6 +87,9 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
   /** If this is X then we'll flush X times faster than we really need.  */
   private final int flush_speed;  // multiplicative factor
 
+  /** whether use new comparator */
+  private final boolean useNewComparator;
+
   /** compaction delete request durable */
   private final boolean deleteDurable;
 
@@ -102,6 +105,8 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
     min_flush_threshold = tsdb.config.getInt("tsd.storage.compaction.min_flush_threshold");
     max_concurrent_flushes = tsdb.config.getInt("tsd.storage.compaction.max_concurrent_flushes");
     flush_speed = tsdb.config.getInt("tsd.storage.compaction.flush_speed");
+    useNewComparator = tsdb.config.getBoolean("tsd.storage.compaction.new.comparator.enable");
+    LOG.warn("compaction queue used new comparator: " + useNewComparator);
     deleteDurable = tsdb.config.getBoolean("tsd.storage.compaction.delete.durable");
     LOG.warn("compaction delete request durable: " + deleteDurable);
     if (tsdb.config.enable_compactions()) {
@@ -174,13 +179,48 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
     }
     final ArrayList<Deferred<Object>> ds =
       new ArrayList<Deferred<Object>>(Math.min(maxflushes, max_concurrent_flushes));
+    int nflushes;
+    if (useNewComparator) {
+      nflushes = newFlush(cut_off, maxflushes, ds);
+    } else {
+      nflushes = oldFlush(cut_off, maxflushes, ds);
+    }
+    maxflushes -= nflushes;
+    final Deferred<ArrayList<Object>> group = Deferred.group(ds);
+    if (nflushes == max_concurrent_flushes && maxflushes > 0) {
+      // We're not done yet.  Once this group of flushes completes, we need
+      // to kick off more.
+      tsdb.getClient().flush();  // Speed up this batch by telling the client to flush.
+      final int maxflushez = maxflushes;  // Make it final for closure.
+      final class FlushMoreCB implements Callback<Deferred<ArrayList<Object>>,
+              ArrayList<Object>> {
+        @Override
+        public Deferred<ArrayList<Object>> call(final ArrayList<Object> arg) {
+          return flush(cut_off, maxflushez);
+        }
+        @Override
+        public String toString() {
+          return "Continue flushing with cut_off=" + cut_off
+                  + ", maxflushes=" + maxflushez;
+        }
+      }
+      group.addCallbackDeferring(new FlushMoreCB());
+    }
+    return group;
+  }
+
+  private int oldFlush(final long cut_off, int maxflushes, ArrayList<Deferred<Object>> ds) {
     int nflushes = 0;
+    int seed = (int) (System.nanoTime() % 3);
     for (final byte[] row : this.keySet()) {
       if (maxflushes <= 0) {
         break;
       }
-      final long base_time = Bytes.getUnsignedInt(row, 
-          Const.SALT_WIDTH() + metric_width);
+      if (seed == row.hashCode() % 3) {
+        continue;
+      }
+      final long base_time = Bytes.getUnsignedInt(row,
+              Const.SALT_WIDTH() + metric_width);
       if (base_time > cut_off) {
         break;
       } else if (nflushes >= max_concurrent_flushes) {
@@ -200,27 +240,37 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
       size.decrementAndGet();
       ds.add(tsdb.get(row).addCallbacks(compactcb, handle_read_error));
     }
-    final Deferred<ArrayList<Object>> group = Deferred.group(ds);
-    if (nflushes == max_concurrent_flushes && maxflushes > 0) {
-      // We're not done yet.  Once this group of flushes completes, we need
-      // to kick off more.
-      tsdb.getClient().flush();  // Speed up this batch by telling the client to flush.
-      final int maxflushez = maxflushes;  // Make it final for closure.
-      final class FlushMoreCB implements Callback<Deferred<ArrayList<Object>>,
-                                                  ArrayList<Object>> {
-        @Override
-        public Deferred<ArrayList<Object>> call(final ArrayList<Object> arg) {
-          return flush(cut_off, maxflushez);
-        }
-        @Override
-        public String toString() {
-          return "Continue flushing with cut_off=" + cut_off
-            + ", maxflushes=" + maxflushez;
-        }
+    return nflushes;
+  }
+
+  private int newFlush(final long cut_off, int maxflushes, ArrayList<Deferred<Object>> ds) {
+    int nflushes = 0;
+    for (final byte[] row : this.keySet()) {
+      if (maxflushes <= 0) {
+        break;
       }
-      group.addCallbackDeferring(new FlushMoreCB());
+      final long base_time = Bytes.getUnsignedInt(row,
+              Const.SALT_WIDTH() + metric_width);
+      if (base_time > cut_off) {
+        break;
+      } else if (nflushes >= max_concurrent_flushes) {
+        // We kicked off the compaction of too many rows already, let's wait
+        // until they're done before kicking off more.
+        break;
+      }
+      // You'd think that it would be faster to grab an iterator on the map
+      // and then call remove() on the iterator to "unlink" the element
+      // directly from where the iterator is at, but no, the JDK implements
+      // it by calling remove(key) so it has to lookup the key again anyway.
+      if (super.remove(row) == null) {  // We didn't remove anything.
+        continue;  // So someone else already took care of this entry.
+      }
+      nflushes++;
+      maxflushes--;
+      size.decrementAndGet();
+      ds.add(tsdb.get(row).addCallbacks(compactcb, handle_read_error));
     }
-    return group;
+    return nflushes;
   }
 
   private final CompactCB compactcb = new CompactCB();
@@ -815,7 +865,6 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
     NewCmp(final TSDB tsdb) {
       this.metricPos = Const.SALT_WIDTH();
       this.tsPos = this.metricPos + tsdb.metrics.width();
-      LOG.warn("compaction queue used new comparator!!!");
     }
 
     @Override

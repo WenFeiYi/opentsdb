@@ -238,10 +238,10 @@ public class SaltScanner {
     return results; 
   }
 
-  private static enum QueryExpMsg {
+  private enum QueryExpMsg {
     QUERY_TIMEOUT("query timeout!"),
     SCAN_TIMEOUT("scan timeout!"),
-    SCAN_NEXT_TIMEOUT("scan.next timeout");
+    SCAN_NEXT_TIMEOUT("scan.next timeout!");
 
     String msg;
 
@@ -283,7 +283,7 @@ public class SaltScanner {
       results.callback(exception);
       return;
     }
-    if(rowNum.get() > tsdb.queryTimeout) {
+    if(cost > tsdb.queryTimeout) {
       // query timeout
       printQueryLog(QueryExpMsg.QUERY_TIMEOUT, cost);
     }
