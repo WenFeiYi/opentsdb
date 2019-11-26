@@ -1,2 +1,9 @@
-本分支是Hubble线上环境正在使用的opentsdb版本，代码来自opentsdb开源版本2.3.1
-github：https://github.com/opentsdb/opentsdb
+本分支用于开发优化opentsdb，代码基于opentsdb-2.3.1
+优化点：
+1、增加新的compaction queue comparator，使每次compaction的请求分散到整个集群中，降低请求峰值
+2、可关闭compaction delete durable，减轻IO压力，不影响数据的完整性，只是在HBase有节点故障时会产生很少量的数据冗余，但不影响opentsdb查询的准确性
+3、增加以metrics单位的查询限制limit。如果启用，返回结果最多有limit条数据线（一种metrics、tags组合在一个小时的数据算一条数据线）
+4、增加以metrics单位的查询超时日志（包括query timeout、scan timeout、scan.next timeout），输出starttime，endtime，metrics，tags，cost等项
+5、修复启用预加载uid表时全表扫描的bug，只扫描配置指定的数量
+6、修复expire scanner无限重试的bug，停止重试，结束查询
+详细wiki：https://moji.wemomo.com/doc#/detail/95012

@@ -29,10 +29,8 @@ import net.opentsdb.stats.QueryStats.QueryStat;
 import net.opentsdb.uid.UniqueId;
 import net.opentsdb.utils.DateTime;
 
+import org.hbase.async.*;
 import org.hbase.async.Bytes.ByteMap;
-import org.hbase.async.DeleteRequest;
-import org.hbase.async.KeyValue;
-import org.hbase.async.Scanner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,6 +55,10 @@ import com.stumbleupon.async.Deferred;
  */
 public class SaltScanner {
   private static final Logger LOG = LoggerFactory.getLogger(SaltScanner.class);
+  private static final Logger QUERY_LOG = LoggerFactory.getLogger("QueryLog");
+
+  private static final long UNSET = -1;
+  private static final String UNSET_STR = String.valueOf(UNSET);
   
   /** This is a map that the caller must supply. We'll fill it with data.
    * WARNING: The salted row comparator should be applied to this map. */
@@ -111,6 +113,14 @@ public class SaltScanner {
    * goes pear shaped. Make sure to synchronize on this object when checking
    * for null or assigning from a scanner's callback. */
   private volatile Exception exception;
+
+  private final String query_start_time;
+  private final String query_end_time;
+  private final String metric_name;
+  private final Map<String, String> tags;
+
+  /** return number of row */
+  private final AtomicInteger rowNum = new AtomicInteger();
   
   /**
    * Default ctor that performs some validation. Call {@link scan} after 
@@ -151,6 +161,22 @@ public class SaltScanner {
                                       final boolean delete,
                                       final QueryStats query_stats,
                                       final int query_index) {
+    this(tsdb, metric, scanners, spans, filters, delete, query_stats, query_index,
+            UNSET, UNSET, null, null);
+
+  }
+
+  public SaltScanner(final TSDB tsdb, final byte[] metric,
+                     final List<Scanner> scanners,
+                     final TreeMap<byte[], Span> spans,
+                     final List<TagVFilter> filters,
+                     final boolean delete,
+                     final QueryStats query_stats,
+                     final int query_index,
+                     final long query_start_time,
+                     final long query_end_time,
+                     final String metric_name,
+                     final Map<String, String> tags) {
     if (Const.SALT_WIDTH() < 1) {
       throw new IllegalArgumentException(
           "Salting is disabled. Use the regular scanner");
@@ -169,18 +195,18 @@ public class SaltScanner {
           + "Please provide a list of scanners for each salt.");
     }
     if (scanners.size() != Const.SALT_BUCKETS()) {
-      throw new IllegalArgumentException("Not enough or too many scanners " + 
-          scanners.size() + " when the salt bucket count is " + 
+      throw new IllegalArgumentException("Not enough or too many scanners " +
+          scanners.size() + " when the salt bucket count is " +
           Const.SALT_BUCKETS());
     }
     if (metric == null) {
       throw new IllegalArgumentException("The metric array was null.");
     }
     if (metric.length != TSDB.metrics_width()) {
-      throw new IllegalArgumentException("The metric was too short. It must be " 
+      throw new IllegalArgumentException("The metric was too short. It must be "
           + TSDB.metrics_width() + "bytes wide.");
     }
-    
+
     this.scanners = scanners;
     this.spans = spans;
     this.metric = metric;
@@ -189,6 +215,11 @@ public class SaltScanner {
     this.delete = delete;
     this.query_stats = query_stats;
     this.query_index = query_index;
+
+    this.query_start_time = query_start_time >= 0 ? DateTime.tsToDateTime(query_start_time) : UNSET_STR;
+    this.query_end_time = query_end_time >= 0 ? DateTime.tsToDateTime(query_end_time) : UNSET_STR;
+    this.metric_name = metric_name;
+    this.tags = tags;
   }
 
   /**
@@ -207,6 +238,27 @@ public class SaltScanner {
     return results; 
   }
 
+  private static enum QueryExpMsg {
+    QUERY_TIMEOUT("query timeout!"),
+    SCAN_TIMEOUT("scan timeout!"),
+    SCAN_NEXT_TIMEOUT("scan.next timeout");
+
+    String msg;
+
+    QueryExpMsg(String msg) {
+      this.msg = msg;
+    }
+
+    String getMsg() {
+      return msg;
+    }
+  }
+
+  public void printQueryLog(QueryExpMsg msg, long cost) {
+    QUERY_LOG.warn(msg.getMsg() + " start=" + query_start_time + ", end=" + query_end_time
+            + ", metric=" + metric_name + ", tag=" + tags + ", cost=" + cost + "ms");
+  }
+
   /**
    * Called once all of the scanners have reported back in to record our
    * latency and merge the results into the spans map. If there was an exception
@@ -214,14 +266,26 @@ public class SaltScanner {
    */
   private void mergeAndReturnResults() {
     final long hbase_time = System.currentTimeMillis();
-    TsdbQuery.scanlatency.add((int)(hbase_time - start_time));
+    final long cost = hbase_time - start_time;
+    TsdbQuery.scanlatency.add((int)(cost));
     long rows = 0;
 
     if (exception != null) {
+      if (exception instanceof UnknownScannerException) {
+        // scan timeout
+        printQueryLog(QueryExpMsg.SCAN_TIMEOUT, cost);
+      } else if (exception instanceof RpcTimedOutException) {
+        // scan.next timeout
+        printQueryLog(QueryExpMsg.SCAN_NEXT_TIMEOUT, cost);
+      }
       LOG.error("After all of the scanners finished, at "
           + "least one threw an exception", exception);
       results.callback(exception);
       return;
+    }
+    if(rowNum.get() > tsdb.queryTimeout) {
+      // query timeout
+      printQueryLog(QueryExpMsg.QUERY_TIMEOUT, cost);
     }
     
     // Merge sorted spans together
@@ -283,7 +347,7 @@ public class SaltScanner {
           (DateTime.nanoTime() - merge_start));
     }
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Scanning completed in " + (hbase_time - start_time) + " ms, " +
+      LOG.debug("Scanning completed in " + cost + " ms, " +
             rows + " rows, and stored in " + spans.size() + " spans");
       LOG.debug("It took " + (System.currentTimeMillis() - hbase_time) + " ms, "
             + " to merge and sort the rows into a tree map");
@@ -351,6 +415,11 @@ public class SaltScanner {
     * found
     */
     public Object scan() {
+      // return result over limit
+      if (tsdb.enableScanLimit && rowNum.get() >= tsdb.scanLimit) {
+        close(true);
+        return null;
+      }
       if (scanner_start < 0) {
         scanner_start = DateTime.nanoTime();
       }
@@ -387,6 +456,7 @@ public class SaltScanner {
                 new ArrayList<Deferred<Object>>(rows.size()) : null;
         
         rows_pre_filter += rows.size();
+        rowNum.addAndGet(rows.size());
         for (final ArrayList<KeyValue> row : rows) {
           final byte[] key = row.get(0).key();
           if (RowKey.rowKeyContainsMetric(metric, key) != 0) {

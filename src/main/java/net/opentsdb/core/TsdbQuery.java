@@ -95,9 +95,6 @@ final class TsdbQuery implements Query {
   /** Row key regex to pass to HBase if we have tags or TSUIDs */
   private String regex;
   
-  /** Whether or not to enable the fuzzy row filter for Hbase */
-  private boolean enable_fuzzy_filter;
-  
   /**
    * Tags by which we must group the results.
    * Each element is a tag ID.
@@ -136,12 +133,16 @@ final class TsdbQuery implements Query {
   
   /** Whether or not to match series with ONLY the given tags */
   private boolean explicit_tags;
+
+  /** query metric name string */
+  private String metric_name;
+
+  /** query tags */
+  private Map<String, String> tags;
   
   /** Constructor. */
   public TsdbQuery(final TSDB tsdb) {
     this.tsdb = tsdb;
-    enable_fuzzy_filter = tsdb.getConfig()
-        .getBoolean("tsd.query.enable_fuzzy_filter");
   }
 
   /**
@@ -263,6 +264,9 @@ final class TsdbQuery implements Query {
     aggregator = function;
     this.rate = rate;
     this.rate_options = rate_options;
+
+    this.metric_name = metric;
+    this.tags = tags;
   }
 
   @Override
@@ -386,9 +390,11 @@ final class TsdbQuery implements Query {
           }
         }
       }
-      
+
+      this.metric_name = sub_query.getMetric();
+      this.tags = sub_query.getTags();
       // fire off the callback chain by resolving the metric first
-      return tsdb.metrics.getIdAsync(sub_query.getMetric())
+      return tsdb.metrics.getIdAsync(metric_name)
           .addCallbackDeferring(new MetricCB());
     }
   }
@@ -554,7 +560,7 @@ final class TsdbQuery implements Query {
       }
       scan_start_time = DateTime.nanoTime();
       return new SaltScanner(tsdb, metric, scanners, spans, scanner_filters,
-          delete, query_stats, query_index).scan();
+          delete, query_stats, query_index, start_time, end_time, metric_name, tags).scan();
     }
     
     scan_start_time = DateTime.nanoTime();
@@ -1152,7 +1158,7 @@ final class TsdbQuery implements Query {
    */
   private void createAndSetFilter(final Scanner scanner) {
     QueryUtil.setDataTableScanFilter(scanner, group_bys, row_key_literals, 
-        explicit_tags, enable_fuzzy_filter, 
+        explicit_tags, tsdb.enable_fuzzy_filter,
         (end_time == UNSET
         ? -1  // Will scan until the end (0xFFF...).
         : (int) getScanEndTimeSeconds()));

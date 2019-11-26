@@ -14,6 +14,10 @@ package net.opentsdb.utils;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.TimeZone;
@@ -29,6 +33,17 @@ import net.opentsdb.core.Tags;
 public class DateTime {
   /** ID of the UTC timezone */
   public static final String UTC_ID = "UTC";
+
+  private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+  private static final ZoneId ZONE_ID = ZoneId.systemDefault();
+  /**
+   * 将时间戳转化为yyyy-MM-dd HH:mm:ss格式的时间字符串
+   * @param ts 时间戳
+   * @return yyyy-MM-dd HH:mm:ss格式的时间字符串
+   */
+  public static String tsToDateTime(long ts) {
+    return LocalDateTime.ofInstant(Instant.ofEpochMilli(ts), ZONE_ID).format(FORMATTER);
+  }
   
   /**
    * Immutable cache mapping a timezone name to its object.

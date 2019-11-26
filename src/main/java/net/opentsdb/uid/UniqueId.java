@@ -1665,7 +1665,7 @@ public final class UniqueId implements UniqueIdInterface {
       for (ArrayList<ArrayList<KeyValue>> rows = scanner.nextRows().join();
           rows != null;
           rows = scanner.nextRows().join()) {
-        for (final ArrayList<KeyValue> row : rows) {
+        for (ArrayList<KeyValue> row : rows) {
           for (KeyValue kv: row) {
             final String name = fromBytes(kv.key());
             final byte[] kind = kv.qualifier();
@@ -1678,10 +1678,9 @@ public final class UniqueId implements UniqueIdInterface {
             }
           }
           num_rows += row.size();
-          row.clear();  // free()
-          if (num_rows >= max_results) {
-            break;
-          }
+        }
+        if (num_rows >= max_results) {
+          break;
         }
       }
       for (UniqueId unique_id_table : uid_cache_map.values()) {

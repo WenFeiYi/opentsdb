@@ -87,18 +87,23 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
   /** If this is X then we'll flush X times faster than we really need.  */
   private final int flush_speed;  // multiplicative factor
 
+  /** compaction delete request durable */
+  private final boolean deleteDurable;
+
   /**
    * Constructor.
    * @param tsdb The TSDB we belong to.
    */
   public CompactionQueue(final TSDB tsdb) {
-    super(new Cmp(tsdb));
+    super(tsdb.config.getBoolean("tsd.storage.compaction.new.comparator.enable") ? new NewCmp(tsdb) : new Cmp(tsdb));
     this.tsdb = tsdb;
     metric_width = tsdb.metrics.width();
     flush_interval = tsdb.config.getInt("tsd.storage.compaction.flush_interval");
     min_flush_threshold = tsdb.config.getInt("tsd.storage.compaction.min_flush_threshold");
     max_concurrent_flushes = tsdb.config.getInt("tsd.storage.compaction.max_concurrent_flushes");
     flush_speed = tsdb.config.getInt("tsd.storage.compaction.flush_speed");
+    deleteDurable = tsdb.config.getBoolean("tsd.storage.compaction.delete.durable");
+    LOG.warn("compaction delete request durable: " + deleteDurable);
     if (tsdb.config.enable_compactions()) {
       startCompactionThread();
     }
@@ -164,25 +169,21 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
     assert maxflushes > 0: "maxflushes must be > 0, but I got " + maxflushes;
     // We can't possibly flush more entries than size().
     maxflushes = Math.min(maxflushes, size());
-    if (maxflushes == 0) {  // Because size() might be 0.
+    if (maxflushes <= 0) {  // Because size() might be 0.
       return Deferred.fromResult(new ArrayList<Object>(0));
     }
     final ArrayList<Deferred<Object>> ds =
       new ArrayList<Deferred<Object>>(Math.min(maxflushes, max_concurrent_flushes));
     int nflushes = 0;
-    int seed = (int) (System.nanoTime() % 3);
     for (final byte[] row : this.keySet()) {
-      if (maxflushes == 0) {
+      if (maxflushes <= 0) {
         break;
-      }
-      if (seed == row.hashCode() % 3) {
-        continue;
       }
       final long base_time = Bytes.getUnsignedInt(row, 
           Const.SALT_WIDTH() + metric_width);
       if (base_time > cut_off) {
         break;
-      } else if (nflushes == max_concurrent_flushes) {
+      } else if (nflushes >= max_concurrent_flushes) {
         // We kicked off the compaction of too many rows already, let's wait
         // until they're done before kicking off more.
         break;
@@ -631,7 +632,7 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
 
     @Override
     public Object call(final Object arg) {
-      return tsdb.delete(key, qualifiers).addErrback(handle_delete_error);
+      return tsdb.delete(key, qualifiers, deleteDurable).addErrback(handle_delete_error);
     }
 
     @Override
@@ -805,5 +806,32 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
       // If the timestamps are equal, sort according to the entire row key.
       return c != 0 ? c : Bytes.memcmp(a, b);
     }
+  }
+
+  private static final class NewCmp implements Comparator<byte[]> {
+    private final int metricPos;
+    private final int tsPos;
+
+    NewCmp(final TSDB tsdb) {
+      this.metricPos = Const.SALT_WIDTH();
+      this.tsPos = this.metricPos + tsdb.metrics.width();
+      LOG.warn("compaction queue used new comparator!!!");
+    }
+
+    @Override
+    public int compare(byte[] a, byte[] b) {
+      final int c = Bytes.memcmp(a, b, tsPos, Const.TIMESTAMP_BYTES);
+      return c != 0 ? c : bytesCmp(a, b, metricPos);
+    }
+  }
+
+  private static int bytesCmp(final byte[] a, final byte[] b, final int offset) {
+    final int length = Math.min(a.length, b.length);
+    for (int i = offset; i < length; i++) {
+      if (a[i] != b[i]) {
+        return (a[i] & 0xFF) - (b[i] & 0xFF);
+      }
+    }
+    return a.length - b.length;
   }
 }

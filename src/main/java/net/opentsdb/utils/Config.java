@@ -542,6 +542,10 @@ public class Config {
       + "Content-Type, Accept, Origin, User-Agent, DNT, Cache-Control, "
       + "X-Mx-ReqToken, Keep-Alive, X-Requested-With, If-Modified-Since");
     default_map.put("tsd.query.timeout", "0");
+    default_map.put("tsd.storage.compaction.new.comparator.enable", "false");
+    default_map.put("tsd.storage.compaction.delete.durable", "true");
+    default_map.put("tsd.query.scan.limit.enable", "false");
+    default_map.put("tsd.query.scan.limit", "3600000");
 
     for (Map.Entry<String, String> entry : default_map.entrySet()) {
       if (!properties.containsKey(entry.getKey()))

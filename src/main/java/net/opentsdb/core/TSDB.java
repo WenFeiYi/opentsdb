@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.google.common.base.Preconditions;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
 import com.stumbleupon.async.DeferredGroupException;
@@ -148,6 +149,18 @@ public final class TSDB {
   /** Datapoints Added */
   private static final AtomicLong datapoints_added = new AtomicLong();
 
+  /** Whether or not to enable the fuzzy row filter for Hbase */
+  boolean enable_fuzzy_filter;
+
+  /** tsdb query timeout */
+  public final long queryTimeout;
+
+  /** 是否为每个scanner增加limit */
+  final boolean enableScanLimit;
+
+  /** scanner的limit的值 */
+  final int scanLimit;
+
   /**
    * Constructor
    * @param client An initialized HBase client object
@@ -239,6 +252,16 @@ public final class TSDB {
     
     // set any extra tags from the config for stats
     StatsCollector.setGlobalTags(config);
+
+    enable_fuzzy_filter = config.getBoolean("tsd.query.enable_fuzzy_filter");
+    queryTimeout = config.getLong("tsd.query.timeout");
+    Preconditions.checkArgument(queryTimeout >= 0, "invalid config! tsd.query.timeout < 0");
+    LOG.warn("query timeout: " + queryTimeout);
+    enableScanLimit = config.getBoolean("tsd.query.scan.limit.enable");
+    LOG.warn("query scan limit enable: " + enableScanLimit);
+    scanLimit = config.getInt( "tsd.query.scan.limit");
+    Preconditions.checkArgument(scanLimit >= 0, "invalid config! tsd.query.scan.limit < 0");
+    LOG.warn("query scan limit: " + scanLimit);
     
     LOG.debug(config.dumpConfiguration());
   }
@@ -1601,4 +1624,10 @@ public final class TSDB {
     return client.delete(new DeleteRequest(table, key, FAMILY, qualifiers));
   }
 
+  /** compaction delete */
+  final Deferred<Object> delete(final byte[] key, final byte[][] qualifiers, boolean isDurable) {
+    DeleteRequest deleteRequest = new DeleteRequest(table, key, FAMILY, qualifiers);
+    deleteRequest.setDurable(isDurable);
+    return client.delete(deleteRequest);
+  }
 }
