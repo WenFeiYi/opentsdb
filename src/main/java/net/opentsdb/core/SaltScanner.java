@@ -239,6 +239,7 @@ public class SaltScanner {
   }
 
   private enum QueryExpMsg {
+    OVER_LIMIT("return result over limit!"),
     QUERY_TIMEOUT("query timeout!"),
     SCAN_TIMEOUT("scan timeout!"),
     SCAN_NEXT_TIMEOUT("scan.next timeout!");
@@ -259,6 +260,13 @@ public class SaltScanner {
             + ", metric=" + metric_name + ", tag=" + tags + ", cost=" + cost + "ms");
   }
 
+  private static class OverLimitException extends Exception {
+    private static final String MSG = "return result over limit!";
+    OverLimitException() {
+      super(MSG);
+    }
+  }
+
   /**
    * Called once all of the scanners have reported back in to record our
    * latency and merge the results into the spans map. If there was an exception
@@ -277,6 +285,9 @@ public class SaltScanner {
       } else if (exception instanceof RpcTimedOutException) {
         // scan.next timeout
         printQueryLog(QueryExpMsg.SCAN_NEXT_TIMEOUT, cost);
+      } else if (exception instanceof OverLimitException) {
+        // over limit
+        printQueryLog(QueryExpMsg.OVER_LIMIT, cost);
       }
       LOG.error("After all of the scanners finished, at "
           + "least one threw an exception", exception);
@@ -415,11 +426,6 @@ public class SaltScanner {
     * found
     */
     public Object scan() {
-      // return result over limit
-      if (tsdb.enableScanLimit && rowNum.get() >= tsdb.scanLimit) {
-        close(true);
-        return null;
-      }
       if (scanner_start < 0) {
         scanner_start = DateTime.nanoTime();
       }
@@ -449,14 +455,18 @@ public class SaltScanner {
           }
           return null;
         }
-
+        rowNum.addAndGet(rows.size());
+        if (tsdb.enableScanLimit && rowNum.get() >= tsdb.scanLimit) {
+          close(false);
+          handleException(new OverLimitException());
+          return null;
+        }
         // used for UID resolution if a filter is involved
         final List<Deferred<Object>> lookups = 
             filters != null && !filters.isEmpty() ? 
                 new ArrayList<Deferred<Object>>(rows.size()) : null;
         
         rows_pre_filter += rows.size();
-        rowNum.addAndGet(rows.size());
         for (final ArrayList<KeyValue> row : rows) {
           final byte[] key = row.get(0).key();
           if (RowKey.rowKeyContainsMetric(metric, key) != 0) {
