@@ -436,16 +436,16 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
       deleted_cells.addAndGet(to_delete.size());  // We're going to delete this.
       if (write) {
         written_cells.incrementAndGet();
-        Deferred<Object> deferred = tsdb.put(key, compact.qualifier(), compact.value());
+        Deferred<Object> deferred = tsdb.compactPut(key, compact.qualifier(), compact.value());
         if (!to_delete.isEmpty()) {
-          deferred = deferred.addCallbacks(new DeleteCompactedCB(to_delete), handle_write_error);
+          deferred = deferred.addCallbacks(new DeleteCompactedCB(to_delete.get(0).key()), handle_write_error);
         }
         return deferred;
       } else if (last_append_column == null) {
         // We had nothing to write, because one of the cells is already the
         // correctly compacted version, so we can go ahead and delete the
         // individual cells directly.
-        new DeleteCompactedCB(to_delete).call(null);
+        new DeleteCompactedCB(to_delete.get(0).key()).call(null);
         return null;
       } else {
         return null;
@@ -669,20 +669,14 @@ final class CompactionQueue extends ConcurrentSkipListMap<byte[], Boolean> {
 
     /** What we're going to delete.  */
     private final byte[] key;
-    private final byte[][] qualifiers;
 
-    public DeleteCompactedCB(final List<KeyValue> cells) {
-      final KeyValue first = cells.get(0);
-      key = first.key();
-      qualifiers = new byte[cells.size()][];
-      for (int i = 0; i < qualifiers.length; i++) {
-        qualifiers[i] = cells.get(i).qualifier();
-      }
+    public DeleteCompactedCB(final byte[] key) {
+      this.key = key;
     }
 
     @Override
     public Object call(final Object arg) {
-      return tsdb.delete(key, qualifiers, deleteDurable).addErrback(handle_delete_error);
+      return tsdb.compactDelete(key, deleteDurable).addErrback(handle_delete_error);
     }
 
     @Override

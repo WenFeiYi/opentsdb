@@ -316,12 +316,11 @@ public class QueryUtil {
    * @param start The start time stamp in seconds
    * @param stop The stop timestamp in seconds
    * @param table The table name to scan over
-   * @param family The table family to scan over
    * @return A scanner ready for processing.
    */
   public static Scanner getMetricScanner(final TSDB tsdb, final int salt_bucket, 
       final byte[] metric, final int start, final int stop, 
-      final byte[] table, final byte[] family) {
+      final byte[] table) {
     final short metric_width = TSDB.metrics_width();
     final int metric_salt_width = metric_width + Const.SALT_WIDTH();
     final byte[] start_row = new byte[metric_salt_width + Const.TIMESTAMP_BYTES];
@@ -343,7 +342,6 @@ public class QueryUtil {
     scanner.setMaxNumRows(tsdb.getConfig().scanner_maxNumRows());
     scanner.setStartKey(start_row);
     scanner.setStopKey(end_row);
-    scanner.setFamily(family);
     return scanner;
   }
   

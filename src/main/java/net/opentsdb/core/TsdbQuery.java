@@ -1057,7 +1057,7 @@ final class TsdbQuery implements Query {
     final Scanner scanner = QueryUtil.getMetricScanner(tsdb, salt_bucket, metric, 
         (int) getScanStartTimeSeconds(), end_time == UNSET
         ? -1  // Will scan until the end (0xFFF...).
-        : (int) getScanEndTimeSeconds(), tsdb.table, TSDB.FAMILY());
+        : (int) getScanEndTimeSeconds(), tsdb.table);
     if (tsuids != null && !tsuids.isEmpty()) {
       createAndSetTSUIDFilter(scanner);
     } else if (filters.size() > 0) {

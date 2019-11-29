@@ -141,7 +141,6 @@ final class CliUtils {
     final Scanner scanner = tsdb.getClient().newScanner(tsdb.dataTable());
     scanner.setStartKey(start_row);
     scanner.setStopKey(end_row);
-    scanner.setFamily(TSDB.FAMILY());
     return scanner;
   }
   
@@ -185,7 +184,6 @@ final class CliUtils {
         final Scanner scanner = tsdb.getClient().newScanner(tsdb.dataTable());
         scanner.setStartKey(Arrays.copyOf(start_key, start_key.length));
         scanner.setStopKey(Arrays.copyOf(stop_key, stop_key.length));
-        scanner.setFamily(TSDB.FAMILY());
         scanners.add(scanner);
       }
       
@@ -226,7 +224,6 @@ final class CliUtils {
         if (stop_key != null) {
           scanner.setStopKey(Arrays.copyOf(stop_key, stop_key.length));
         }
-        scanner.setFamily(TSDB.FAMILY());
         scanners.add(scanner);
       }
       

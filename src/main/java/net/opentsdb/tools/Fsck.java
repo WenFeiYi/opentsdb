@@ -713,7 +713,7 @@ final class Fsck {
         final byte[] new_value = Arrays.copyOfRange(compact_value, 0, 
             value_index);
         final PutRequest put = new PutRequest(tsdb.dataTable(), key, 
-            TSDB.FAMILY(), new_qualifier, new_value);
+            TSDB.COMPACT_FAMILY, new_qualifier, new_value);
         
         // it's *possible* that the hash of our new compacted qualifier is in
         // the delete list so double check before we delete everything
@@ -750,24 +750,20 @@ final class Fsck {
           // proceeding with the deletes.
           tsdb.getClient().put(put).joinUninterruptibly();
         }
-        
-        final List<Deferred<Object>> deletes = 
-            new ArrayList<Deferred<Object>>(unique_columns.size());
+
         for (byte[] qualifier : unique_columns.keySet()) {
-          final DeleteRequest delete = new DeleteRequest(tsdb.dataTable(), key, 
-              TSDB.FAMILY(), qualifier);
           if (LOG.isDebugEnabled()) {
             final StringBuilder buf = new StringBuilder();
             buf.append("Deleting column: ")
-               .append("\n    row key: (")
-               .append(UniqueId.uidToString(key))
-               .append(")\n    qualifier: ")
-               .append(Bytes.pretty(qualifier));
+                    .append("\n    row key: (")
+                    .append(UniqueId.uidToString(key))
+                    .append(")\n    qualifier: ")
+                    .append(Bytes.pretty(qualifier));
             LOG.debug(buf.toString());
           }
-          deletes.add(tsdb.getClient().delete(delete));
         }
-        Deferred.group(deletes).joinUninterruptibly();
+        DeleteRequest delete = new DeleteRequest(tsdb.dataTable(), key, TSDB.FAMILY());
+        tsdb.getClient().delete(delete).joinUninterruptibly();
         duplicates_fixed.getAndAdd(duplicates_fixed_comp.longValue());
         duplicates_fixed_comp.set(0);
       }

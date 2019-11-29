@@ -1619,14 +1619,23 @@ public final class TSDB {
     return client.put(new PutRequest(table, key, FAMILY, qualifier, value));
   }
 
+  // compaction new family
+  public static final byte[] COMPACT_FAMILY = {'n'};
+  /** compaction put */
+  final Deferred<Object> compactPut(final byte[] key,
+                             final byte[] qualifier,
+                             final byte[] value) {
+    return client.put(new PutRequest(table, key, COMPACT_FAMILY, qualifier, value));
+  }
+
   /** Deletes the given cells from the data table. */
   final Deferred<Object> delete(final byte[] key, final byte[][] qualifiers) {
     return client.delete(new DeleteRequest(table, key, FAMILY, qualifiers));
   }
 
   /** compaction delete */
-  final Deferred<Object> delete(final byte[] key, final byte[][] qualifiers, boolean isDurable) {
-    DeleteRequest deleteRequest = new DeleteRequest(table, key, FAMILY, qualifiers);
+  final Deferred<Object> compactDelete(final byte[] key, boolean isDurable) {
+    DeleteRequest deleteRequest = new DeleteRequest(table, key, FAMILY);
     deleteRequest.setDurable(isDurable);
     return client.delete(deleteRequest);
   }

@@ -1,9 +1,11 @@
-本分支用于开发优化opentsdb，代码基于opentsdb-2.3.1
+本分支基于dev-2.3.1分支进行优化，目的是为了降低compaction delete的处理成本和耗时；
+之前数据点越密集compaction delete耗时越长且成本越高，现在可以使其成本和耗时降到很低且保持稳定，
+不受数据点密集度的影响
 优化点：
-1、增加新的compaction queue comparator，使每次compaction的请求分散到整个集群中，降低请求峰值
-2、可关闭compaction delete durable，减轻IO压力，不影响数据的完整性，只是在HBase有节点故障时会产生很少量的数据冗余，但不影响opentsdb查询的准确性
-3、增加以metrics单位的查询限制limit。如果启用，返回结果最多有limit条数据线（一种metrics、tags组合在一个小时的数据算一条数据线）
-4、增加以metrics单位的查询超时日志（包括query timeout、scan timeout、scan.next timeout），输出starttime，endtime，metrics，tags，cost等项
-5、修复启用预加载uid表时全表扫描的bug，只扫描配置指定的数量
-6、修复expire scanner无限重试的bug，停止重试，结束查询
-详细wiki：https://moji.wemomo.com/doc#/detail/95012
+1、compaction put进入新的family 'n'
+2、compaction delete整个旧的family 't'
+3、查询去掉family限制（原先只查family 't'）
+
+注意：由于数据在HBase中的存储格式改变，升级上线后，可以完全兼容老的数据格式，但原来的opentsdb版本不兼容新的数据格式，
+     一旦回退，上线之后的这批数据通过原有版本的opentsdb是查不出来的
+     以上是建立在compaction开启的情况下，如果没有开启就没有影响
