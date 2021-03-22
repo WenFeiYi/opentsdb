@@ -6,4 +6,3 @@
 4、增加以metrics单位的查询超时日志（包括query timeout、scan timeout、scan.next timeout），输出starttime，endtime，metrics，tags，cost等项
 5、修复启用预加载uid表时全表扫描的bug，只扫描配置指定的数量
 6、修复expire scanner无限重试的bug，停止重试，结束查询
-详细wiki：https://moji.wemomo.com/doc#/detail/95012
